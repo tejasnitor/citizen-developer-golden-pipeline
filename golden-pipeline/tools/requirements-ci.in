@@ -1,0 +1,6 @@
+# The tools the golden-pipeline workflows run, pinned centrally so every repo is checked by the same versions.
+# Regenerate requirements-ci.txt after a change:
+#   uv pip compile --universal --generate-hashes --python-version 3.10 requirements-ci.in -o requirements-ci.txt
+ruff==0.17.3
+pyright==1.1.414
+pip-audit==2.10.1

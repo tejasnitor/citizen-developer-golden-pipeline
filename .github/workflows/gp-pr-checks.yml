@@ -1,0 +1,68 @@
+---
+name: PR Checks
+
+on:
+  workflow_call:
+    inputs:
+      release_app:
+        type: string
+        default: "pp-release-bot[bot]"
+      commits_grandfathered:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: Check PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Check PR Title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 golden-pipeline/tools/check_pr_title.py
+
+  commits:
+    name: Check Commit Messages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Check Commits
+        env:
+          COMMITS_GRANDFATHERED: ${{ inputs.commits_grandfathered }}
+        run: python3 golden-pipeline/tools/check_commits.py origin/${{ github.base_ref }} HEAD
+
+  branch-target:
+    name: Check Target Branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Check Branch Target
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          RELEASE_APP: ${{ inputs.release_app }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: python3 golden-pipeline/tools/check_branch_target.py
