@@ -117,9 +117,10 @@ jobs:
             docker run --rm \
               -v "$trust:/trust:ro" \
               -v "$canary/$kind:/canary:ro" \
+              -w /canary \
+              zricethezav/gitleaks:v8.21.2 detect \
               --config /trust/.gitleaks.toml \
               --source . \
-              -w /canary \
               --no-git
             rc=$?
             set -e
@@ -140,8 +141,11 @@ jobs:
           docker run --rm \
             -v "$trust:/trust:ro" \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -w /workspace \
+            zricethezav/gitleaks:v8.21.2 detect \
             --config /trust/.gitleaks.toml \
-            --gitleaks-ignore-path /trust
+            --gitleaks-ignore-path /trust \
+            --source .
 
   sast:
     name: SAST Scanning

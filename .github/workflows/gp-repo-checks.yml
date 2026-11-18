@@ -7,6 +7,9 @@ on:
       confidential_denylist:
         type: string
         default: ".github/golden-pipeline/confidential-denylist.txt"
+      confidential_accepted:
+        type: string
+        default: ".github/golden-pipeline/confidential-accepted.txt"
       justfile:
         type: string
         default: "report"
@@ -24,12 +27,25 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Check Pinning
-        run: python3 golden-pipeline/tools/check_repo.py
+        run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          python3 "$TOOLS/check_home_pin.py"
 
   codeowners:
     name: Check CODEOWNERS Validity
@@ -37,15 +53,27 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Validate CODEOWNERS
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${{ github.repository }}/codeowners/errors?ref=${{ github.ref }}" | python3 golden-pipeline/tools/check_codeowners.py
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          gh api "repos/${{ github.repository }}/codeowners/errors?ref=${{ github.ref }}" | python3 "$TOOLS/check_codeowners.py"
 
   confidential:
     name: Check Confidential Content
@@ -55,14 +83,31 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Scan Confidential Content
         run: |
-          python3 golden-pipeline/tools/check_confidential.py \
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          accepted_arg=""
+          if [ -f "${{ inputs.confidential_accepted }}" ]; then
+            accepted_arg="--accepted ${{ inputs.confidential_accepted }}"
+          fi
+          python3 "$TOOLS/check_confidential.py" \
             --denylist "${{ inputs.confidential_denylist }}" \
+            $accepted_arg \
             ${{ github.event_name == 'pull_request' && format('--range origin/{0}..HEAD', github.base_ref) || '' }}
 
   justfile:
@@ -72,13 +117,29 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Validate Justfile
         working-directory: ${{ inputs.working_directory }}
         env:
           MODE: "${{ inputs.justfile }}"
         run: |
-          python3 "$GITHUB_WORKSPACE/golden-pipeline/tools/check_justfile.py" --mode "$MODE"
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -f "Justfile" ] || [ -f "justfile" ]; then
+            python3 "$TOOLS/check_justfile.py" --mode "$MODE"
+          else
+            echo "No Justfile present in consumer repository; skipping check."
+          fi

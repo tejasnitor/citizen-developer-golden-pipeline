@@ -39,22 +39,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install Pinned CI Tools
         run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
           uv venv --python "${{ inputs.python_version }}" .ci-venv
           . .ci-venv/bin/activate
-          uv pip install -q --require-hashes -r golden-pipeline/tools/requirements-ci.txt
+          uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
 
       - name: Run Ruff & Format Check
         working-directory: ${{ inputs.working_directory }}
         run: |
           . $GITHUB_WORKSPACE/.ci-venv/bin/activate
           TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
+          [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
           ruff check .
-          python3 "$TOOLS/check_format.py" --baseline "${{ inputs.format_baseline }}"
+          if [ -f "${{ inputs.format_baseline }}" ]; then
+            python3 "$TOOLS/check_format.py" --baseline "${{ inputs.format_baseline }}"
+          else
+            python3 "$TOOLS/check_format.py"
+          fi
 
   types:
     name: Type Checking (pyright)
@@ -65,24 +80,41 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Sync Project Dependencies
         working-directory: ${{ inputs.working_directory }}
-        run: uv sync --frozen --python "${{ inputs.python_version }}"
+        run: |
+          if [ -f "uv.lock" ]; then
+            uv sync --frozen --python "${{ inputs.python_version }}"
+          elif [ -f "requirements.txt" ]; then
+            uv venv --python "${{ inputs.python_version }}" .venv || true
+            uv pip install -r requirements.txt || true
+          fi
 
       - name: Install Pinned CI Tools
         run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
           uv venv --python "${{ inputs.python_version }}" .ci-venv
           . .ci-venv/bin/activate
-          uv pip install -q --require-hashes -r golden-pipeline/tools/requirements-ci.txt
+          uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
 
       - name: Run Pyright Check
         working-directory: ${{ inputs.working_directory }}
         run: |
           . $GITHUB_WORKSPACE/.ci-venv/bin/activate
           TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
+          [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
           python3 "$TOOLS/check_types.py" --baseline "${{ inputs.types_baseline }}" --python-version "${{ inputs.python_version }}" ${{ inputs.source_paths }} ${{ inputs.test_paths }}
 
   tests:
@@ -97,11 +129,21 @@ jobs:
 
       - name: Sync Project Dependencies
         working-directory: ${{ inputs.working_directory }}
-        run: uv sync --frozen --python "${{ inputs.python_version }}"
+        run: |
+          if [ -f "uv.lock" ]; then
+            uv sync --frozen --python "${{ inputs.python_version }}"
+          elif [ -f "requirements.txt" ]; then
+            uv pip install -r requirements.txt || true
+            uv pip install pytest pytest-cov || true
+          fi
 
       - name: Run Pytest with Coverage Floor
         working-directory: ${{ inputs.working_directory }}
         run: |
           cov=()
           for s in ${{ inputs.source_paths }}; do cov+=("--cov=$s"); done
-          uv run --frozen --no-sync pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          if [ -f "uv.lock" ]; then
+            uv run --frozen --no-sync pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          else
+            pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          fi

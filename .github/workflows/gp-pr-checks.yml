@@ -21,14 +21,27 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Check PR Title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: python3 golden-pipeline/tools/check_pr_title.py
+        run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          python3 "$TOOLS/check_pr_title.py"
 
   commits:
     name: Check Commit Messages
@@ -38,14 +51,27 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Check Commits
         env:
           COMMITS_GRANDFATHERED: ${{ inputs.commits_grandfathered }}
-        run: python3 golden-pipeline/tools/check_commits.py origin/${{ github.base_ref }} HEAD
+        run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          python3 "$TOOLS/check_commits.py" origin/${{ github.base_ref }} HEAD
 
   branch-target:
     name: Check Target Branch
@@ -53,10 +79,20 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.11"
+
       - name: Check Branch Target
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -65,4 +101,7 @@ jobs:
           RELEASE_APP: ${{ inputs.release_app }}
           BASE_REPO: ${{ github.repository }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-        run: python3 golden-pipeline/tools/check_branch_target.py
+        run: |
+          TOOLS="golden-pipeline/tools"
+          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          python3 "$TOOLS/check_branch_target.py"
