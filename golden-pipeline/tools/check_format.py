@@ -26,10 +26,16 @@ BASELINE = ".github/golden-pipeline/format-baseline.txt"
 
 
 def unformatted() -> set[str]:
-    r = subprocess.run(["ruff", "format", "--check", "--output-format", "concise", "."], capture_output=True, text=True)
+    cmd = ["ruff", "format", "--check"]
+    r = subprocess.run(cmd + ["--output-format", "concise", "."], capture_output=True, text=True)
+    if r.returncode not in (0, 1):
+        r = subprocess.run(cmd + ["."], capture_output=True, text=True)
     if r.returncode not in (0, 1):  # 2: ruff itself failed (bad config, syntax error); fail closed
         sys.exit(f"ruff format failed:\n{r.stdout}{r.stderr}")
-    return {m.group(1) for m in re.finditer(r"^(.+?):\d+:\d+: unformatted:", r.stdout, re.M)}
+    matches = {m.group(1) for m in re.finditer(r"^(.+?):\d+:\d+: unformatted:", r.stdout, re.M)}
+    if not matches:
+        matches = {m.group(1).strip() for m in re.finditer(r"^Would reformat: (.+)$", r.stdout, re.M)}
+    return matches
 
 
 def entries(text: str) -> set[str]:
