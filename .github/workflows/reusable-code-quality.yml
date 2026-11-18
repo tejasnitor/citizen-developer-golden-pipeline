@@ -1,0 +1,21 @@
+---
+name: Reusable Code Quality Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-markdown:
+    name: Lint Markdown Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Lint Markdown with markdownlint-cli2
+        uses: DavidAnson/markdownlint-cli2-action@b4c99aa03206a51d957f9ea12349b1a51187d9a1
+        with:
+          config: .markdownlint.yml
+          globs: "**/*.md"

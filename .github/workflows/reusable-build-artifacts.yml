@@ -1,0 +1,92 @@
+---
+name: Reusable Build and Artifact Management
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifacts:
+    name: Package Pipeline Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: version
+        run: |
+          if VERSION=$(git describe --tags --exact-match 2>/dev/null); then
+            echo "Found exact tag: $VERSION"
+          else
+            VERSION=$(git describe --always)
+            echo "Fallback to commit SHA: $VERSION"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect Workflow Files
+        run: |
+          mkdir -p package/workflows
+          cp .github/workflows/reusable-*.yml package/workflows/
+          cp .github/workflows/ci.yml package/workflows/
+
+      - name: Collect Configuration Files
+        run: |
+          mkdir -p package/config
+          cp .markdownlint.yml package/config/
+          cp .yamllint.yml package/config/
+          cp .semgrepignore package/config/
+
+      - name: Generate Manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          COMMIT_SHA=$(git rev-parse HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          REPOSITORY="${{ github.repository }}"
+          WORKFLOWS=$(ls package/workflows | jq -R -s -c 'split("\n")[:-1]')
+          CONFIGS=$(ls package/config | jq -R -s -c 'split("\n")[:-1]')
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg commit_sha "$COMMIT_SHA" \
+            --arg build_date "$BUILD_DATE" \
+            --arg repository "$REPOSITORY" \
+            --argjson workflows "$WORKFLOWS" \
+            --argjson configs "$CONFIGS" \
+            '{
+              version: $version,
+              commit_sha: $commit_sha,
+              build_date: $build_date,
+              repository: $repository,
+              workflows: $workflows,
+              configs: $configs
+            }' > package/manifest.json
+          jq . package/manifest.json
+
+      - name: Create Package Archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tar -czf "package/golden-pipeline-${VERSION}.tar.gz" -C package workflows config manifest.json
+
+      - name: Generate Checksums
+        run: |
+          cd package
+          sha256sum golden-pipeline-*.tar.gz > checksums.txt
+          sha256sum manifest.json >> checksums.txt
+          cat checksums.txt
+
+      - name: Upload Pipeline Package
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb99ba811e
+        with:
+          name: golden-pipeline-package
+          path: |
+            package/golden-pipeline-*.tar.gz
+            package/manifest.json
+            package/checksums.txt
+          retention-days: 90
