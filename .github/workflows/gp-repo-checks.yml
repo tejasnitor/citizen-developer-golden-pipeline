@@ -45,7 +45,11 @@ jobs:
         run: |
           TOOLS="golden-pipeline/tools"
           [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
-          python3 "$TOOLS/check_home_pin.py"
+          if [ -d ".github/workflows" ] && ls .github/workflows/gp-*.yml >/dev/null 2>&1; then
+            python3 "$TOOLS/check_home_pin.py"
+          else
+            echo "Consumer repository does not author gp-*.yml workflows; skipping check_home_pin."
+          fi
 
   codeowners:
     name: Check CODEOWNERS Validity

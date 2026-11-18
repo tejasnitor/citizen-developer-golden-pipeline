@@ -119,6 +119,7 @@ jobs:
               -v "$canary/$kind:/canary:ro" \
               -w /canary \
               zricethezav/gitleaks:v8.21.2 detect \
+              --exit-code 99 \
               --config /trust/.gitleaks.toml \
               --source . \
               --no-git
@@ -248,7 +249,14 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Vulnerable dependencies (pip-audit --strict, from uv.lock)
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
           cur="$GITHUB_WORKSPACE"
@@ -264,7 +272,13 @@ jobs:
               fi
             done
           fi
-          pip-audit --strict
+          if command -v pip-audit >/dev/null 2>&1; then
+            pip-audit --strict
+          elif command -v uvx >/dev/null 2>&1; then
+            uvx pip-audit --strict
+          else
+            pip-audit --strict
+          fi
 
   image:
     name: Container Image Scan & SBOM
@@ -274,6 +288,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Image builds
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          PLATFORM: ${{ inputs.image_platform }}
+          WORKDIR: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
           cur="$GITHUB_WORKSPACE"
@@ -289,4 +307,20 @@ jobs:
               fi
             done
           fi
-          docker build -t app:latest .
+
+          df="${DOCKERFILE:-}"
+          if [ -z "$df" ] && [ -f "Dockerfile" ]; then
+            df="Dockerfile"
+          fi
+
+          if [ -z "$df" ]; then
+            echo "No Dockerfile specified or found; skipping image build."
+            exit 0
+          fi
+
+          if [ ! -f "$df" ]; then
+            echo "::error::Dockerfile not found at $df"
+            exit 1
+          fi
+
+          docker build --platform "${PLATFORM:-linux/amd64}" -f "$df" -t app:latest .
