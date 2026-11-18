@@ -1,0 +1,288 @@
+---
+name: Security Scanning
+
+on:
+  workflow_call:
+    inputs:
+      semgrep_config:
+        type: string
+        default: "p/python"
+      semgrep_exclude:
+        type: string
+        default: "tests"
+      dockerfile:
+        type: string
+        default: ""
+      image_blocking:
+        type: boolean
+        default: false
+      image_platform:
+        type: string
+        default: "linux/amd64"
+      working_directory:
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan of the commits this run adds (gitleaks)
+        run: |
+          set -euo pipefail
+          trust="$RUNNER_TEMP/gitleaks-trust"
+          mkdir -p "$trust"
+
+          # Base/trusted commit
+          trusted_ref="${TRUSTED:-${BASE:-}}"
+          if [ -z "$trusted_ref" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+            trusted_ref="origin/${GITHUB_BASE_REF:-develop}"
+          fi
+
+          if [ -n "$trusted_ref" ]; then
+            toml_content=$(git show "$trusted_ref:.gitleaks.toml" 2>/dev/null || true)
+            if [ -n "$toml_content" ]; then
+              # Check for disallowed [extend] path
+              if echo "$toml_content" | grep -iqE '^\s*path\s*='; then
+                echo "::error::extends with path is not allowed in .gitleaks.toml" >&2
+                exit 1
+              fi
+
+              # Check for disallowed global allowlist regexes or stopwords
+              if echo "$toml_content" | grep -iqE '^\s*(regexes|stopwords)\s*='; then
+                echo "::error::global [allowlist] regexes or stopwords is not allowed in .gitleaks.toml" >&2
+                exit 1
+              fi
+
+              # Check if it loads rules: either useDefault = true / "true" or [[rules]]
+              has_default=$(echo "$toml_content" | grep -iqE 'usedefault\s*=\s*("?true"?|true)' && echo 1 || echo 0)
+              has_rules=$(echo "$toml_content" | grep -iqE '\[\[\s*rules\s*\]\]' && echo 1 || echo 0)
+              if [ "$has_default" -ne 1 ] && [ "$has_rules" -ne 1 ]; then
+                echo "::error::.gitleaks.toml loads no rules (must enable useDefault = true or define [[rules]])" >&2
+                exit 1
+              fi
+
+              printf "%s\n" "$toml_content" > "$trust/.gitleaks.toml"
+            fi
+
+            ignore_content=$(git show "$trusted_ref:.gitleaksignore" 2>/dev/null || true)
+            if [ -n "$ignore_content" ]; then
+              printf "%s\n" "$ignore_content" > "$trust/.gitleaksignore"
+            fi
+          fi
+
+          # Ensure default config if not extracted
+          if [ ! -f "$trust/.gitleaks.toml" ]; then
+            cat << 'EOF' > "$trust/.gitleaks.toml"
+          [extend]
+          useDefault = true
+          EOF
+          fi
+
+          # Clean up any repo copy to avoid overrides
+          if [ -L "$GITHUB_WORKSPACE/.gitleaksignore" ]; then
+            rm -f "$GITHUB_WORKSPACE/.gitleaksignore"
+          fi
+          rm -f "$GITHUB_WORKSPACE/.gitleaks.toml"
+
+          # Run Canaries
+          canary="$RUNNER_TEMP/gitleaks-canary"
+          rm -rf "$canary"
+          mkdir -p "$canary/github-token/src/app" "$canary/aws-key/src/app" "$canary/private-key/src/app"
+
+          rnd_token=$(python3 -c "import secrets; print(secrets.token_hex(18))")
+          rnd_aws=$(python3 -c "import secrets, string; print(''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(16)))")
+          rnd_key=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+          echo "GITHUB_TOKEN = \"ghp_${rnd_token}\"" > "$canary/github-token/src/app/settings.py"
+          echo "AWS_ACCESS_KEY_ID = \"AKIA${rnd_aws}\"" > "$canary/aws-key/src/app/settings.py"
+          cat << EOF > "$canary/private-key/src/app/settings.py"
+          -----BEGIN RSA PRIVATE KEY-----
+          MIIEowIBAAKCAQEA0${rnd_key}
+          -----END RSA PRIVATE KEY-----
+          EOF
+
+          missed=()
+          for kind in github-token aws-key private-key; do
+            set +e
+            docker run --rm \
+              -v "$trust:/trust:ro" \
+              -v "$canary/$kind:/canary:ro" \
+              --config /trust/.gitleaks.toml \
+              --source . \
+              -w /canary \
+              --no-git
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              missed+=("$kind")
+            elif [ "$rc" -ne 99 ]; then
+              echo "::error::gitleaks failed on the $kind canary (exit $rc)" >&2
+              exit 1
+            fi
+          done
+
+          if [ ${#missed[@]} -gt 0 ]; then
+            echo "::error::.gitleaks.toml doesn't catch a test ${missed[*]} in src/app/settings.py" >&2
+            exit 1
+          fi
+
+          # Real scan
+          docker run --rm \
+            -v "$trust:/trust:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            --config /trust/.gitleaks.toml \
+            --gitleaks-ignore-path /trust
+
+  sast:
+    name: SAST Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: SAST (Semgrep)
+        run: |
+          set -euo pipefail
+
+          # Symlink checks for working directory
+          cur="$GITHUB_WORKSPACE"
+          workdir="${WORKDIR:-.}"
+          if [ "$workdir" != "." ]; then
+            IFS='/' read -ra PARTS <<< "$workdir"
+            for part in "${PARTS[@]}"; do
+              [ -z "$part" ] || [ "$part" = "." ] && continue
+              cur="$cur/$part"
+              if [ -L "$cur" ]; then
+                echo "::error::$part is a symlink"
+                exit 1
+              fi
+            done
+          fi
+
+          # Restore .semgrepignore from BASE commit
+          base_ref="${BASE:-}"
+          if [ -n "$base_ref" ]; then
+            find "$GITHUB_WORKSPACE" -name ".semgrepignore" -type f -exec rm -f {} +
+
+            raw_list=$(git -C "$GITHUB_WORKSPACE" ls-tree -r --name-only "$base_ref" 2>/dev/null | grep '\.semgrepignore$' || true)
+            while IFS= read -r ign_path; do
+              [ -z "$ign_path" ] && continue
+
+              d="$ign_path"
+              while :; do
+                d=$(dirname -- "$d")
+                [ "$d" = "." ] || [ "$d" = "/" ] && break
+                if [ -L "$GITHUB_WORKSPACE/$d" ]; then
+                  echo "::error::$d is a symlink"
+                  exit 1
+                fi
+              done
+
+              target_dir=$(dirname -- "$ign_path")
+              content=$(git -C "$GITHUB_WORKSPACE" show "$base_ref:$ign_path" 2>/dev/null || true)
+              final_content=""
+
+              while IFS= read -r line || [ -n "$line" ]; do
+                clean_line=$(echo "$line" | tr -d '\r')
+                if [[ "$clean_line" =~ ^[[:space:]]*:include[[:space:]]+(.*)$ ]]; then
+                  inc_file="${BASH_REMATCH[1]}"
+                  inc_file=$(echo "$inc_file" | xargs)
+                  if [ "$target_dir" = "." ]; then
+                    rel_inc="$inc_file"
+                  else
+                    rel_inc="$target_dir/$inc_file"
+                  fi
+                  norm_inc=$(python3 -c "import posixpath; print(posixpath.normpath('$rel_inc'))")
+                  if [[ "$norm_inc" == ..* ]]; then
+                    continue
+                  fi
+                  inc_content=$(git -C "$GITHUB_WORKSPACE" show "$base_ref:$norm_inc" 2>/dev/null || true)
+                  if [ -n "$inc_content" ]; then
+                    while IFS= read -r iline || [ -n "$iline" ]; do
+                      clean_iline=$(echo "$iline" | tr -d '\r')
+                      if [[ ! "$clean_iline" =~ ^[[:space:]]*:include ]]; then
+                        final_content="${final_content}${clean_iline}"$'\n'
+                      fi
+                    done <<< "$inc_content"
+                  fi
+                else
+                  final_content="${final_content}${clean_line}"$'\n'
+                fi
+              done <<< "$content"
+
+              dest="$GITHUB_WORKSPACE/$ign_path"
+              dest_dir=$(dirname -- "$dest")
+              real_dir=$(python3 -c "import os; print(os.path.realpath('$dest_dir'))")
+              real_root=$(python3 -c "import os; print(os.path.realpath('$GITHUB_WORKSPACE'))")
+              case "$real_dir/" in
+                "$real_root/"*) ;;
+                *) echo "::error::$ign_path resolves outside the checkout"; exit 1 ;;
+              esac
+              mkdir -p "$dest_dir"
+              printf "%s" "$final_content" > "$dest"
+            done <<< "$raw_list"
+          fi
+
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" semgrep/semgrep scan ${CONFIGS:-p/python} ${EXCLUDES:-}
+
+  dependencies:
+    name: Dependency Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Vulnerable dependencies (pip-audit --strict, from uv.lock)
+        run: |
+          set -euo pipefail
+          cur="$GITHUB_WORKSPACE"
+          workdir="${WORKDIR:-.}"
+          if [ "$workdir" != "." ]; then
+            IFS='/' read -ra PARTS <<< "$workdir"
+            for part in "${PARTS[@]}"; do
+              [ -z "$part" ] || [ "$part" = "." ] && continue
+              cur="$cur/$part"
+              if [ -L "$cur" ]; then
+                echo "::error::$part is a symlink"
+                exit 1
+              fi
+            done
+          fi
+          pip-audit --strict
+
+  image:
+    name: Container Image Scan & SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Image builds
+        run: |
+          set -euo pipefail
+          cur="$GITHUB_WORKSPACE"
+          workdir="${WORKDIR:-.}"
+          if [ "$workdir" != "." ]; then
+            IFS='/' read -ra PARTS <<< "$workdir"
+            for part in "${PARTS[@]}"; do
+              [ -z "$part" ] || [ "$part" = "." ] && continue
+              cur="$cur/$part"
+              if [ -L "$cur" ]; then
+                echo "::error::$part is a symlink"
+                exit 1
+              fi
+            done
+          fi
+          docker build -t app:latest .
