@@ -1,0 +1,57 @@
+---
+name: Golden Pipeline Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment to roll back (dev or qa)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+        default: dev
+      service_name:
+        description: "Service to roll back (e.g. labs, lp-notification-service)"
+        required: true
+        type: string
+      target_digest:
+        description: "Previously verified immutable digest (sha256:...)"
+        required: true
+        type: string
+      reason:
+        description: "Reason for rollback"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment to roll back (dev or qa)"
+        required: true
+        type: string
+      service_name:
+        description: "Service to roll back (e.g. labs, lp-notification-service)"
+        required: true
+        type: string
+      target_digest:
+        description: "Previously verified immutable digest (sha256:...)"
+        required: true
+        type: string
+      reason:
+        description: "Reason for rollback"
+        required: false
+        type: string
+        default: "Automated health check failure rollback"
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Execute Rollback
+    uses: ./.github/workflows/gp-deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      service_name: ${{ inputs.service_name }}
+      image_digest: ${{ inputs.target_digest }}
