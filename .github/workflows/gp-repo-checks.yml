@@ -36,6 +36,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -44,7 +51,11 @@ jobs:
       - name: Check Pinning
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           if [ -d ".github/workflows" ] && ls .github/workflows/gp-*.yml >/dev/null 2>&1; then
             python3 "$TOOLS/check_home_pin.py"
           else
@@ -66,6 +77,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -76,7 +94,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           gh api "repos/${{ github.repository }}/codeowners/errors?ref=${{ github.ref }}" | python3 "$TOOLS/check_codeowners.py"
 
   confidential:
@@ -96,6 +118,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -104,7 +133,11 @@ jobs:
       - name: Scan Confidential Content
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           accepted_arg=""
           if [ -f "${{ inputs.confidential_accepted }}" ]; then
             accepted_arg="--accepted ${{ inputs.confidential_accepted }}"
@@ -130,6 +163,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -141,7 +181,11 @@ jobs:
           MODE: "${{ inputs.justfile }}"
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           if [ -f "Justfile" ] || [ -f "justfile" ]; then
             python3 "$TOOLS/check_justfile.py" --mode "$MODE"
           else

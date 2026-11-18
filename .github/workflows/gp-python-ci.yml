@@ -47,6 +47,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -55,7 +62,11 @@ jobs:
       - name: Install Pinned CI Tools
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           uv venv --python "${{ inputs.python_version }}" .ci-venv
           . .ci-venv/bin/activate
           uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
@@ -65,8 +76,12 @@ jobs:
         run: |
           . $GITHUB_WORKSPACE/.ci-venv/bin/activate
           TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
-          [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
-          ruff check .
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
+          fi
+          ruff check ${{ inputs.source_paths }} ${{ inputs.test_paths }}
           if [ -f "${{ inputs.format_baseline }}" ]; then
             python3 "$TOOLS/check_format.py" --baseline "${{ inputs.format_baseline }}"
           else
@@ -90,6 +105,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -108,7 +130,11 @@ jobs:
       - name: Install Pinned CI Tools
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           uv venv --python "${{ inputs.python_version }}" .ci-venv
           . .ci-venv/bin/activate
           uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
@@ -118,7 +144,11 @@ jobs:
         run: |
           . $GITHUB_WORKSPACE/.ci-venv/bin/activate
           TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
-          [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
+          fi
           python3 "$TOOLS/check_types.py" --baseline "${{ inputs.types_baseline }}" --python-version "${{ inputs.python_version }}" ${{ inputs.source_paths }} ${{ inputs.test_paths }}
 
   tests:
@@ -139,6 +169,8 @@ jobs:
           if [ -f "uv.lock" ]; then
             uv sync --frozen --python "${{ inputs.python_version }}"
           elif [ -f "requirements.txt" ]; then
+            uv venv --python "${{ inputs.python_version }}" .venv || true
+            . .venv/bin/activate
             uv pip install -r requirements.txt || true
             uv pip install pytest pytest-cov || true
           fi

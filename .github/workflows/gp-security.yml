@@ -240,7 +240,11 @@ jobs:
             done <<< "$raw_list"
           fi
 
-          docker run --rm -v "$GITHUB_WORKSPACE:/src" semgrep/semgrep scan ${CONFIGS:-p/python} ${EXCLUDES:-}
+          excludes_arg=""
+          if [ -n "${EXCLUDES:-}" ]; then
+            excludes_arg="--exclude ${EXCLUDES}"
+          fi
+          docker run --rm --entrypoint semgrep -v "$GITHUB_WORKSPACE:/src" semgrep/semgrep scan --config ${CONFIGS:-p/python} $excludes_arg
 
   dependencies:
     name: Dependency Vulnerabilities

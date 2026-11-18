@@ -30,6 +30,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -40,7 +47,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           python3 "$TOOLS/check_pr_title.py"
 
   commits:
@@ -60,6 +71,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -70,7 +88,11 @@ jobs:
           COMMITS_GRANDFATHERED: ${{ inputs.commits_grandfathered }}
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           python3 "$TOOLS/check_commits.py" origin/${{ github.base_ref }} HEAD
 
   branch-target:
@@ -88,6 +110,13 @@ jobs:
           ref: Golden-Pipeline
           path: .golden-pipeline-tools
 
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
@@ -103,5 +132,9 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           TOOLS="golden-pipeline/tools"
-          [ -d ".golden-pipeline-tools/golden-pipeline/tools" ] && TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
           python3 "$TOOLS/check_branch_target.py"
