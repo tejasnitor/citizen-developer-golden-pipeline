@@ -1,0 +1,128 @@
+# Local commands that run what the golden pipeline's CI runs, the same way (Golden Pipeline PGP-20.5).
+# From infra-github-workflows' golden-pipeline/kit/templates/justfile; copy it next to pyproject.toml and uv.lock
+# (the folder python-ci's working_directory names) and keep the settings below in step with ci.yml.
+#
+#   just setup    install the project from uv.lock, and the pipeline's pinned tools
+#   just hooks    install the pre-commit hooks (pre-commit and commit-msg)
+#   just lint     ruff check, and ruff format against the shrink-only baseline   (python-ci / lint)
+#   just types    pyright against the shrink-only baseline                        (python-ci / types)
+#   just test     pytest with the coverage floor                                  (python-ci / tests)
+#   just check    all of the above but hooks: run it before pushing
+#
+# Tool versions come from one place, the commit of infra-github-workflows that ci.yml pins gp-python-ci.yml to: its
+# golden-pipeline/tools/requirements-ci.txt (ruff, pyright, hash-checked) and its check scripts. Bump the pin and the
+# next run fetches the new ones; nothing here holds a tool version. The project's own pins (pytest, pytest-cov) come
+# from uv.lock, as in CI. Fetched tools are cached in ${XDG_CACHE_HOME:-~/.cache}/golden-pipeline.
+#
+# Needs just, uv, git and bash (macOS or Linux). Environment overrides:
+#   GP_REF   the infra-github-workflows commit to use instead of the one ci.yml pins (a full SHA)
+#   GP_HOME  a local checkout of infra-github-workflows to use instead of fetching one
+#   GP_REPO  the clone URL to fetch from (default below; an SSH URL works too)
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Keep these in step with the `with:` of python-ci in .github/workflows/ci.yml.
+python := "3.12"
+source_paths := "src"
+test_paths := "tests"
+coverage_min := "80"
+format_baseline := ".github/golden-pipeline/format-baseline.txt"
+types_baseline := ".github/golden-pipeline/types-baseline.txt"
+
+# Not run by CI, so pinned here; it runs the hooks pinned in .pre-commit-config.yaml.
+pre_commit := "4.7.0"
+
+gp_repo := env("GP_REPO", "https://github.com/Procurementpartners/infra-github-workflows.git")
+gp_env := quote(just_executable()) + " -f " + quote(justfile()) + " python=" + quote(python) + " _gp-env"
+
+# Lint, type-check and test, as CI does
+check: lint types test
+
+# Install the project from uv.lock (as CI does: --frozen) and the pipeline's pinned tools
+setup:
+    {{ gp_env }} > /dev/null
+    uv sync --frozen --python {{ python }}
+
+# Install the pre-commit hooks, commit-msg included
+hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$(git rev-parse --show-toplevel)
+    test -f "$root/.pre-commit-config.yaml" || { echo "no .pre-commit-config.yaml at $root" >&2; exit 1; }
+    pc="${XDG_CACHE_HOME:-$HOME/.cache}/golden-pipeline/pre-commit-{{ pre_commit }}"
+    if [ ! -x "$pc/bin/pre-commit" ]; then
+      uv venv -q --allow-existing --python {{ python }} "$pc"
+      VIRTUAL_ENV="$pc" uv pip install -q "pre-commit=={{ pre_commit }}"
+    fi
+    cd "$root"
+    "$pc/bin/pre-commit" install --hook-type pre-commit --hook-type commit-msg
+
+# ruff check, then ruff format against the shrink-only baseline (python-ci / lint)
+lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gp=$({{ gp_env }})
+    eval "$gp"
+    ruff check .
+    python3 "$TOOLS/check_format.py" --baseline {{ quote(format_baseline) }}
+
+# pyright against the shrink-only baseline (python-ci / types)
+types: setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gp=$({{ gp_env }})
+    eval "$gp"
+    python3 "$TOOLS/check_types.py" --baseline {{ quote(types_baseline) }} --python-version {{ python }} \
+      {{ source_paths }} {{ test_paths }}
+
+# pytest with the coverage floor (python-ci / tests)
+test: setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cov=()
+    for s in {{ source_paths }}; do cov+=("--cov=$s"); done
+    uv run --frozen --no-sync pytest -q {{ test_paths }} "${cov[@]}" --cov-report=term-missing \
+      --cov-report=xml:coverage.xml --cov-fail-under={{ coverage_min }}
+
+# Prints `export TOOLS=… PATH=…` for the pipeline's tools at the pinned commit, fetching and installing them once.
+_gp-env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cache="${XDG_CACHE_HOME:-$HOME/.cache}/golden-pipeline"
+    if [ -n "${GP_HOME:-}" ]; then
+      home=$(cd "$GP_HOME" && pwd)
+    else
+      ref="${GP_REF:-}"
+      if [ -z "$ref" ]; then
+        root=$(git rev-parse --show-toplevel)
+        ref=$(grep -rhoE 'infra-github-workflows/\.github/workflows/gp-python-ci\.yml@[0-9a-f]{40}' \
+          "$root/.github/workflows" 2>/dev/null | sed 's/.*@//' | sort -u || true)
+        if [ -z "$ref" ] || [ "$(printf '%s\n' "$ref" | grep -c .)" -ne 1 ]; then
+          echo "can't tell which golden-pipeline commit to use: $root/.github/workflows should pin" \
+            "gp-python-ci.yml to exactly one SHA (found: ${ref:-none}). Set GP_REF=<sha> or GP_HOME=<checkout>." >&2
+          exit 1
+        fi
+      fi
+      case "$ref" in *[!0-9a-f]*|"") echo "GP_REF must be a full commit SHA: $ref" >&2; exit 1 ;; esac
+      [ ${#ref} -eq 40 ] || { echo "GP_REF must be a full 40-character commit SHA: $ref" >&2; exit 1; }
+      home="$cache/$ref"
+      if [ ! -f "$home/.fetched" ]; then
+        echo "fetching golden-pipeline tools at $ref" >&2
+        mkdir -p "$home"
+        git -C "$home" init -q
+        git -C "$home" fetch -q --depth 1 {{ quote(gp_repo) }} "$ref"
+        git -C "$home" -c advice.detachedHead=false checkout -q FETCH_HEAD
+        [ "$(git -C "$home" rev-parse HEAD)" = "$ref" ] || { echo "fetched the wrong commit" >&2; exit 1; }
+        touch "$home/.fetched"
+      fi
+    fi
+    tools="$home/golden-pipeline/tools"
+    test -f "$tools/requirements-ci.txt" || { echo "no golden-pipeline tools at $tools" >&2; exit 1; }
+    venv="$cache/tools-py{{ python }}-$(git hash-object "$tools/requirements-ci.txt")"
+    if [ ! -f "$venv/.installed" ]; then
+      echo "installing the pinned tools (requirements-ci.txt) into $venv" >&2
+      uv venv -q --allow-existing --python {{ python }} "$venv"
+      VIRTUAL_ENV="$venv" uv pip install -q --require-hashes -r "$tools/requirements-ci.txt"
+      touch "$venv/.installed"
+    fi
+    printf 'export TOOLS=%q PATH=%q:"$PATH"\n' "$tools" "$venv/bin"

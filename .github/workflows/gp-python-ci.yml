@@ -1,0 +1,190 @@
+---
+name: Python CI
+
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        type: string
+        default: "3.12"
+      source_paths:
+        type: string
+        default: "src"
+      test_paths:
+        type: string
+        default: "tests"
+      coverage_min:
+        type: string
+        default: "80"
+      format_baseline:
+        type: string
+        default: ".github/golden-pipeline/format-baseline.txt"
+      types_baseline:
+        type: string
+        default: ".github/golden-pipeline/types-baseline.txt"
+      working_directory:
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Pinned CI Tools
+        run: |
+          TOOLS="golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
+          uv venv --python "${{ inputs.python_version }}" .ci-venv
+          . .ci-venv/bin/activate
+          uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
+
+      - name: Run Ruff & Format Check
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          . $GITHUB_WORKSPACE/.ci-venv/bin/activate
+          TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
+          fi
+          ruff check ${{ inputs.source_paths }} ${{ inputs.test_paths }}
+          if [ -f "${{ inputs.format_baseline }}" ]; then
+            python3 "$TOOLS/check_format.py" --baseline "${{ inputs.format_baseline }}"
+          else
+            python3 "$TOOLS/check_format.py"
+          fi
+
+  types:
+    name: Type Checking (pyright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Golden Pipeline Tools
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tejasnitor/citizen-developer-golden-pipeline
+          ref: Golden-Pipeline
+          path: .golden-pipeline-tools
+
+      - name: Relocate Tools to Runner Temp
+        if: hashFiles('golden-pipeline/tools/requirements-ci.txt') == ''
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          rm -rf "$RUNNER_TEMP/.golden-pipeline-tools"
+          mv .golden-pipeline-tools "$RUNNER_TEMP/.golden-pipeline-tools"
+
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Sync Project Dependencies
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          if [ -f "uv.lock" ]; then
+            uv sync --frozen --python "${{ inputs.python_version }}"
+          elif [ -f "requirements.txt" ]; then
+            uv venv --python "${{ inputs.python_version }}" .venv || true
+            uv pip install -r requirements.txt || true
+          fi
+
+      - name: Install Pinned CI Tools
+        run: |
+          TOOLS="golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d ".golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS=".golden-pipeline-tools/golden-pipeline/tools"
+          fi
+          uv venv --python "${{ inputs.python_version }}" .ci-venv
+          . .ci-venv/bin/activate
+          uv pip install -q --require-hashes -r "$TOOLS/requirements-ci.txt"
+
+      - name: Run Pyright Check
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          . $GITHUB_WORKSPACE/.ci-venv/bin/activate
+          TOOLS="$GITHUB_WORKSPACE/golden-pipeline/tools"
+          if [ -d "$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$RUNNER_TEMP/.golden-pipeline-tools/golden-pipeline/tools"
+          elif [ -d "$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools" ]; then
+            TOOLS="$GITHUB_WORKSPACE/.golden-pipeline-tools/golden-pipeline/tools"
+          fi
+          python3 "$TOOLS/check_types.py" --baseline "${{ inputs.types_baseline }}" --python-version "${{ inputs.python_version }}" ${{ inputs.source_paths }} ${{ inputs.test_paths }}
+
+  tests:
+    name: Tests & Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Sync Project Dependencies
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          if [ -f "uv.lock" ]; then
+            uv sync --frozen --python "${{ inputs.python_version }}"
+          elif [ -f "requirements.txt" ]; then
+            uv venv --python "${{ inputs.python_version }}" .venv || true
+            . .venv/bin/activate
+            uv pip install -r requirements.txt || true
+            uv pip install pytest pytest-cov || true
+          fi
+
+      - name: Run Pytest with Coverage Floor
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          cov=()
+          for s in ${{ inputs.source_paths }}; do cov+=("--cov=$s"); done
+          if [ -f "uv.lock" ]; then
+            uv run --frozen --no-sync pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          elif [ -d ".venv" ]; then
+            . .venv/bin/activate
+            pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          else
+            pytest -q ${{ inputs.test_paths }} "${cov[@]}" --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=${{ inputs.coverage_min }}
+          fi

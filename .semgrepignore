@@ -1,0 +1,12 @@
+# Tests and fixtures
+tests/
+fixture/
+examples/
+
+# Cache and build
+.git/
+.pytest_cache/
+__pycache__/
+dist/
+build/
+*.tar.gz

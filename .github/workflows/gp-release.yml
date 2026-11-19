@@ -1,0 +1,208 @@
+---
+name: Golden Pipeline Release & Back-Merge
+
+on:
+  workflow_call:
+    inputs:
+      default_branch:
+        description: "Default branch to merge into"
+        required: false
+        type: string
+        default: "develop"
+      release_branch:
+        description: "Release branch"
+        required: false
+        type: string
+        default: "main"
+    secrets:
+      BOT_TOKEN:
+        description: "GitHub Token for back-merge"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  back-merge:
+    name: Back-merge main into develop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Merge main into develop
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          read_api() {
+            gh api "repos/$REPO/$1" "${@:2}" > api.out
+          }
+
+          read_results() {
+            local path="$1"
+            local filter="$2"
+            local outfile="$3"
+            local endpoint="${path%%\?*}"
+            local err=""
+            for try in 1 2 3; do
+              if err=$(gh api "repos/$REPO/$path" --paginate --jq "$filter" 2>&1 > "$outfile"); then
+                return 0
+              fi
+              echo "::warning::Reading $endpoint failed ($err)"
+              sleep 2
+            done
+            echo "::error::Couldn't read $endpoint after 3 tries"
+            return 1
+          }
+
+          GATE_JQ=$(cat <<'GATE_JQ'
+          def run_state:
+            if .conclusion == "success" or .conclusion == "neutral" then "success"
+            elif .conclusion == "skipped" then "pending"
+            elif .conclusion != null then "failure"
+            else "pending"
+            end;
+
+          def status_state:
+            if .state == "success" then "success"
+            elif .state == "pending" then "pending"
+            else "failure"
+            end;
+
+          $req[] | . as $r |
+          (if $r.integration_id then "\($r.context) [app \($r.integration_id)]" else $r.context end) as $label |
+
+          ([ $runs[] | select(.name == $r.context and ($r.integration_id == null or .app.id == $r.integration_id)) ]) as $all_matching_runs |
+          ([ $statuses[] | select(.context == $r.context) ]) as $all_matching_statuses |
+
+          ([ $all_matching_runs[] | select(.started_at == null or .status != "completed") ]) as $unstarted_runs |
+
+          if ($unstarted_runs | length) > 0 then
+            ($unstarted_runs[0]) as $u |
+            "pending\t\($label)\trun \($u.id) (\($u.app.slug // "unknown")) is \($u.status // "queued") with no started_at"
+          elif ($all_matching_runs | length) == 0 and ($all_matching_statuses | length) == 0 then
+            if $r.integration_id != null and ([ $statuses[] | select(.context == $r.context) ] | length) > 0 then
+              "pending\t\($label)\tpinned to app \($r.integration_id); statuses cannot satisfy pinned rules"
+            elif $r.integration_id != null and ([ $runs[] | select(.name == $r.context) ] | length) > 0 then
+              "pending\t\($label)\tpinned to app \($r.integration_id)"
+            else
+              "pending\t\($label)\tno result on the back-merge commit yet"
+            end
+          elif $r.integration_id != null and ($all_matching_runs | length) == 0 then
+            "pending\t\($label)\tpinned to app \($r.integration_id)"
+          else
+            ([
+              $all_matching_runs
+              | group_by(.app.id)[]
+              | . as $app_runs
+              | ([ $app_runs[] | select(.conclusion != "skipped") ]) as $nonskips
+              | if ($nonskips | length) > 0 then
+                  ($nonskips | sort_by(.started_at)[-1] | run_state)
+                else
+                  "pending"
+                end
+            ]) as $run_results |
+
+            (if $r.integration_id == null and ($all_matching_statuses | length) > 0 then
+              [ $all_matching_statuses | sort_by(.created_at)[-1] | status_state ]
+            else
+              []
+            end) as $status_results |
+
+            ($run_results + $status_results) as $results |
+
+            if ($results | length) == 0 then
+              "pending\t\($label)\tno result on the back-merge commit yet"
+            elif ($results | any(. == "failure")) then
+              "failure\t\($label)\tfailed"
+            elif ($results | any(. == "pending")) then
+              "pending\t\($label)\tpending"
+            else
+              "success\t\($label)\tsuccess"
+            end
+          end
+          GATE_JQ
+          )
+
+          base="${base:-$(git rev-parse origin/develop)}"
+          main="${main:-$(git rev-parse origin/main)}"
+
+          if git merge-base --is-ancestor "$main" "$base"; then
+            echo "develop already contains main; nothing to back-merge."
+            exit 0
+          fi
+
+          scratch="back-merge/build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'gh api -X DELETE "repos/$REPO/git/refs/heads/$scratch" >/dev/null 2>&1 || true' EXIT
+          if ! gh api -X POST "repos/$REPO/git/refs" -f "ref=refs/heads/$scratch" -f "sha=$base"; then
+            echo "::error::failed to create scratch ref"
+            exit 1
+          fi
+          if ! merge_res=$(gh api -X POST "repos/$REPO/merges" -f "base=$scratch" -f "head=$main"); then
+            echo "main doesn't merge cleanly into develop"
+            exit 1
+          fi
+          if [ -z "$merge_res" ]; then
+            echo "::error::empty merge output"
+            exit 1
+          fi
+          read -r merge parents <<< "$merge_res"
+          if [ "$parents" != "$base,$main" ]; then
+            echo "not develop's tip and main"
+            exit 1
+          fi
+
+          gh api "repos/$REPO/rules/branches/develop?per_page=100" --paginate --jq '.[]' > rules.json
+          required=$(jq -cs '[ .[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]? ] | unique_by([.context, .integration_id])' rules.json)
+
+          pr=$(gh pr list --repo "$REPO" --base develop --head "$scratch" --json number --jq '.[0].number' || true)
+          if [ -z "$pr" ]; then
+            pr_url=$(gh pr create --repo "$REPO" --base develop --head "$scratch" --title "chore: back-merge main into develop" --body "Automated back-merge")
+            pr=$(basename "$pr_url")
+          fi
+
+          while true; do
+            read_results "commits/$merge/check-runs?per_page=100" . runs.json
+            read_results "commits/$merge/statuses?per_page=100" . statuses.json
+
+            report=$(jq -rn --argjson req "$required" --slurpfile runs runs.json --slurpfile statuses statuses.json "$GATE_JQ")
+
+            all_success=true
+            while IFS=$'\t' read -r state check details; do
+              [ -z "$state" ] && continue
+              if [ "$state" = "failure" ]; then
+                echo "::error::Check $check failed: $details"
+                exit 1
+              elif [ "$state" = "pending" ]; then
+                all_success=false
+              fi
+            done <<< "$report"
+
+            if [ "$all_success" = "true" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          read_api "compare/develop...$merge"
+          if [ "$(cat api.out)" != "ahead" ]; then
+            echo "develop moved while #$pr was being checked"
+            exit 1
+          fi
+
+          gh api -X PUT "repos/$REPO/pulls/$pr/merge" -f merge_method=merge -f "sha=$merge" --jq '.sha' > api.out
+          done_sha=$(cat api.out)
+          read_api "commits/$done_sha"
+          parent=$(cat api.out)
+          read_api "compare/$parent...$merge"
+          if [ "$(cat api.out)" != "ahead" ]; then
+            echo "develop moved just before #$pr was merged"
+            exit 1
+          fi
+
+          echo "Back-merge completed successfully."

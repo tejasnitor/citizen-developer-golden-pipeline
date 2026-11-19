@@ -1,0 +1,58 @@
+---
+name: Golden Pipeline CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Phase 1 - CI Workflow Validation
+    uses: ./.github/workflows/reusable-validate.yml
+
+  code-quality:
+    name: Phase 2 - Code Quality Checks
+    needs: validate
+    uses: ./.github/workflows/reusable-code-quality.yml
+
+  testing:
+    name: Phase 3 - Automated Testing
+    needs: code-quality
+    uses: ./.github/workflows/reusable-testing.yml
+
+  security-scan:
+    name: Phase 4 - Security Scanning
+    needs: testing
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/reusable-security-scan.yml
+
+  dependency-scan:
+    name: Phase 5 - Dependency Scanning
+    needs: security-scan
+    uses: ./.github/workflows/reusable-dependency-scan.yml
+
+  secret-scan:
+    name: Phase 6 - Secret Scanning
+    needs: dependency-scan
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/reusable-secret-scan.yml
+
+  build-artifacts:
+    name: Phase 7 - Build and Artifact Management
+    needs: secret-scan
+    uses: ./.github/workflows/reusable-build-artifacts.yml
