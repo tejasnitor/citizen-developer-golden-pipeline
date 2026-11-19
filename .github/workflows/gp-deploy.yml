@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      use_aws:
+        description: "Authenticate to AWS via OIDC and deploy to ECR/ECS"
+        required: false
+        type: boolean
+        default: false
     secrets:
       AWS_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -89,7 +94,7 @@ jobs:
           output-file: "sbom.spdx.json"
 
       - name: Configure AWS Credentials (OIDC)
-        if: secrets.AWS_ROLE_ARN != ''
+        if: inputs.use_aws
         uses: aws-actions/configure-aws-credentials@5579c002bb4778aa43395ef1df492868a9a1c83f # v4.0.2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -97,13 +102,13 @@ jobs:
           mask-aws-account-id: "true"
 
       - name: Log in to Amazon ECR
-        if: secrets.AWS_ROLE_ARN != '' && secrets.ECR_REGISTRY != ''
+        if: inputs.use_aws
         uses: aws-actions/amazon-ecr-login@4625ce35226a7557230889aae2f52eb50ec3dcda # v2.0.1
 
       - name: Push Container Image by Digest
         id: push
         run: |
-          if [ -n "${{ secrets.AWS_ROLE_ARN }}" ] && [ -n "${{ secrets.ECR_REGISTRY }}" ]; then
+          if [ "${{ inputs.use_aws }}" = "true" ] && [ -n "${{ secrets.ECR_REGISTRY }}" ]; then
             ECR_TAG="${{ secrets.ECR_REGISTRY }}/${{ inputs.service_name }}:${{ github.sha }}"
             echo "Tagging image for Amazon ECR: $ECR_TAG"
             docker tag "${{ env.IMAGE_TAG }}" "$ECR_TAG"
@@ -143,7 +148,7 @@ jobs:
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS Credentials for Deployment (OIDC)
-        if: secrets.AWS_ROLE_ARN != ''
+        if: inputs.use_aws
         uses: aws-actions/configure-aws-credentials@5579c002bb4778aa43395ef1df492868a9a1c83f # v4.0.2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -155,7 +160,7 @@ jobs:
           DIGEST="${{ steps.target.outputs.digest }}"
           echo "Updating ECS service ${{ inputs.service_name }} in cluster ${{ inputs.cluster_name }}..."
           
-          if [ -n "${{ secrets.AWS_ROLE_ARN }}" ]; then
+          if [ "${{ inputs.use_aws }}" = "true" ]; then
             echo "Triggering ECS Fargate rolling deployment via AWS CLI..."
             aws ecs update-service \
               --cluster "${{ inputs.cluster_name }}" \
