@@ -50,7 +50,7 @@ permissions:
 jobs:
   rollback:
     name: Execute Rollback
-    uses: tejasnitor/citizen-developer-golden-pipeline/.github/workflows/gp-deploy.yml@Golden-Pipeline
+    uses: ./.github/workflows/gp-deploy.yml
     with:
       environment: ${{ inputs.environment }}
       service_name: ${{ inputs.service_name }}
