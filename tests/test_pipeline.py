@@ -89,15 +89,18 @@ def test_all_workflows_have_required_top_level_keys(workflow_dir):
 
 
 def test_workflow_level_permissions_are_contents_read_only(workflow_dir):
-    """Verify workflow-level permissions are exactly 'contents: read'."""
+    """Verify workflow-level permissions are exactly 'contents: read' (with id-token: write allowed for OIDC deploy/rollback)."""
     workflows = discover_workflow_files(workflow_dir)
 
     for filename in workflows:
         data = load_workflow_yaml(workflow_dir, filename)
         perms = data.get('permissions', {})
 
-        # BaseLoader returns dict with string keys and values
-        expected = {'contents': 'read'}
+        # OIDC cloud deployment workflows require id-token: write
+        if filename in ['gp-deploy.yml', 'gp-rollback.yml']:
+            expected = {'contents': 'read', 'id-token': 'write'}
+        else:
+            expected = {'contents': 'read'}
         assert perms == expected, f"{filename}: workflow-level permissions must be {expected}, got {perms}"
 
 
