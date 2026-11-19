@@ -55,3 +55,4 @@ jobs:
       environment: ${{ inputs.environment }}
       service_name: ${{ inputs.service_name }}
       image_digest: ${{ inputs.target_digest }}
+      rollback_reason: ${{ inputs.reason }}

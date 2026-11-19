@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: "."
+      rollback_reason:
+        description: "Reason or incident ID if this deployment is an operational rollback"
+        required: false
+        type: string
+        default: ""
     secrets:
       AWS_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -125,6 +130,7 @@ jobs:
             "commit_sha": "${{ github.sha }}",
             "image_digest": "${{ steps.target.outputs.digest }}",
             "deployed_by": "${{ github.actor }}",
+            "rollback_reason": "${{ inputs.rollback_reason }}",
             "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           }
           EOF
