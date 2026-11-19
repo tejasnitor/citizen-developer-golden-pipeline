@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: "Automated health check failure rollback"
+      use_aws:
+        description: "Deploy to AWS (ECR/ECS)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,8 +56,10 @@ jobs:
   rollback:
     name: Execute Rollback
     uses: ./.github/workflows/gp-deploy.yml
+    secrets: inherit
     with:
       environment: ${{ inputs.environment }}
       service_name: ${{ inputs.service_name }}
       image_digest: ${{ inputs.target_digest }}
       rollback_reason: ${{ inputs.reason }}
+      use_aws: ${{ inputs.use_aws }}
